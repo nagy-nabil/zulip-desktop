@@ -449,3 +449,15 @@ webview.focus {
     opacity: 1;
   }
 }
+
+.dropup {
+  margin-top: 2px;
+
+  /* border-top: 3px green solid; */
+}
+
+.dropdown{
+  margin-top: 2px;
+
+  /* border-bottom: 3px green solid; */
+}

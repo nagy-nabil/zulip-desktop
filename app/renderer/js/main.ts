@@ -31,6 +31,10 @@ import ReconnectUtil from "./utils/reconnect-util.js";
 
 Sentry.init({});
 
+function arraySwapItem<T>(arr: T[], i: number, j: number): void {
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+}
+
 type WebviewListener =
   | "webview-reload"
   | "back"
@@ -81,6 +85,7 @@ export class ServerManagerView {
   tabIndex: number;
   presetOrgs: string[];
   preferenceView?: PreferenceView;
+  startDragIndex: number;
   constructor() {
     this.$addServerButton = document.querySelector("#add-tab")!;
     this.$tabsContainer = document.querySelector("#tabs-container")!;
@@ -123,6 +128,7 @@ export class ServerManagerView {
     this.presetOrgs = [];
     this.functionalTabs = new Map();
     this.tabIndex = 0;
+    this.startDragIndex = 0;
   }
 
   async init(): Promise<void> {
@@ -136,6 +142,7 @@ export class ServerManagerView {
     }
 
     await this.initTabs();
+    console.dir(this.tabs, {depth: 3});
     this.initActions();
     this.registerIpcs();
   }
@@ -363,51 +370,89 @@ export class ServerManagerView {
 
   initServer(server: ServerConf, index: number): void {
     const tabIndex = this.getTabIndex();
-    this.tabs.push(
-      new ServerTab({
-        role: "server",
-        icon: `data:application/octet-stream;base64,${fs.readFileSync(
-          server.icon,
-          "base64",
-        )}`,
-        name: server.alias,
-        $root: this.$tabsContainer,
-        onClick: this.activateLastTab.bind(this, index),
+    const serverTab = new ServerTab({
+      role: "server",
+      icon: `data:application/octet-stream;base64,${fs.readFileSync(
+        server.icon,
+        "base64",
+      )}`,
+      name: server.alias,
+      $root: this.$tabsContainer,
+      onClick: this.activateLastTab.bind(this, index),
+      index,
+      tabIndex,
+      onHover: this.onHover.bind(this, index),
+      onHoverOut: this.onHoverOut.bind(this, index),
+      webview: WebView.create({
+        $root: this.$webviewsContainer,
+        rootWebContents,
         index,
         tabIndex,
-        onHover: this.onHover.bind(this, index),
-        onHoverOut: this.onHoverOut.bind(this, index),
-        webview: WebView.create({
-          $root: this.$webviewsContainer,
-          rootWebContents,
-          index,
-          tabIndex,
-          url: server.url,
-          role: "server",
-          hasPermission: (origin: string, permission: string) =>
-            origin === server.url && permission === "notifications",
-          isActive: () => index === this.activeTabIndex,
-          switchLoading: async (loading: boolean, url: string) => {
-            if (loading) {
-              this.loading.add(url);
-            } else {
-              this.loading.delete(url);
-            }
+        url: server.url,
+        role: "server",
+        hasPermission: (origin: string, permission: string) =>
+          origin === server.url && permission === "notifications",
+        isActive: () => index === this.activeTabIndex,
+        switchLoading: async (loading: boolean, url: string) => {
+          if (loading) {
+            this.loading.add(url);
+          } else {
+            this.loading.delete(url);
+          }
 
-            const tab = this.tabs[this.activeTabIndex];
-            this.showLoading(
-              tab instanceof ServerTab &&
-                this.loading.has((await tab.webview).props.url),
-            );
-          },
-          onNetworkError: async (index: number) => {
-            await this.openNetworkTroubleshooting(index);
-          },
-          onTitleChange: this.updateBadge.bind(this),
-          preload: url.pathToFileURL(path.join(bundlePath, "preload.js")).href,
-        }),
+          const tab = this.tabs[this.activeTabIndex];
+          this.showLoading(
+            tab instanceof ServerTab &&
+              this.loading.has((await tab.webview).props.url),
+          );
+        },
+        onNetworkError: async (index: number) => {
+          await this.openNetworkTroubleshooting(index);
+        },
+        onTitleChange: this.updateBadge.bind(this),
+        preload: url.pathToFileURL(path.join(bundlePath, "preload.js")).href,
       }),
-    );
+    });
+
+    (serverTab.$el as HTMLDivElement).addEventListener("dragstart", (e) => {
+      this.startDragIndex = serverTab.props.index;
+      console.log(
+        "🪵 [main.ts:419] ~ token ~ \x1b[0;32mthis.startDragIndex\x1b[0m = ",
+        this.startDragIndex,
+      );
+      console.log("start dragging");
+    });
+    // assign drop event when creaing the server tab
+    (serverTab.$el as HTMLDivElement).addEventListener("drop", (e) => {
+      e.preventDefault();
+      const target = this.tabs[this.startDragIndex].$el;
+      const endIndex = serverTab.props.index;
+      console.log(
+        `droped ${this.startDragIndex} into ${serverTab.props.index}`,
+      );
+
+      // shift items images up or down in the tabs array
+      if (this.startDragIndex < endIndex) {
+        (this.tabs[this.startDragIndex] as ServerTab).updateIndx(endIndex);
+        for (let i = this.startDragIndex + 1; i <= endIndex; ++i) {
+          const cur = this.tabs[i] as ServerTab;
+          cur.updateIndx(cur.props.index - 1);
+          this.$tabsContainer.insertBefore(cur.$el, this.tabs[i - 1].$el);
+          arraySwapItem(this.tabs, i, i - 1);
+        }
+      } else if (this.startDragIndex > endIndex) {
+        (this.tabs[this.startDragIndex] as ServerTab).updateIndx(endIndex);
+        for (let i = this.startDragIndex - 1; i >= endIndex; --i) {
+          const cur = this.tabs[i] as ServerTab;
+          cur.updateIndx(cur.props.index + 1);
+          this.$tabsContainer.insertBefore(this.tabs[i + 1].$el, cur.$el);
+          arraySwapItem(this.tabs, i, i + 1);
+        }
+      }
+      console.dir(this.tabs);
+    });
+
+    this.tabs.push(serverTab);
     this.loading.add(server.url);
   }
 
